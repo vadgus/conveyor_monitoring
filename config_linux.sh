@@ -159,17 +159,7 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-off -n -t int -s 0 || true
     sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-sleep -n -t int -s 0 || true
 
-    # tiling: hotkeys + mouse-to-edge snapping/tiling
-    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
-    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
-    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_to_windows -s true || true
-    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_width -s 30 || true
-
-    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
-    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left" || true
-    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right" || true
-
-    # set centered wallpaper image with black background for all monitors and workspaces
+    # Best-effort: set centered wallpaper image with black background for all monitors and workspaces
     echo "Applying centered wallpaper image to all XFCE monitors..."
     paths=$(sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u)
 
@@ -179,8 +169,7 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$wallpaper_file" || true
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "$wallpaper_file" || true
 
-      # Centered style (XFCE GUI shows "Centered")
-      # Common enum: 1 = Centered
+      # Centered
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 1 || true
 
       # solid color (black) around the image
@@ -193,23 +182,23 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     sudo -u "$real_user" xfdesktop --replace > /dev/null 2>&1 &
   fi
 
-  # autostart GUI-time theme + wallpaper + hotkeys + 24/7 apply
+  # autostart GUI-time apply (theme + wallpaper + hotkeys + mouse-tiling + 24/7)
   mkdir -p "$user_home/.config/autostart"
   cat <<EOF > "$user_home/.config/autostart/xfce-apply-theme.desktop"
 [Desktop Entry]
 Type=Application
 Name=Apply XFCE Theme, Wallpaper, Hotkeys and 24/7
-OnlyShowIn=XFCE;
 Exec=sh -c '
-sleep 2
+# Run later so XFCE does not overwrite values after startup
+sleep 8
 
 # Ensure xfconfd is running
 pgrep -x xfconfd >/dev/null 2>&1 || xfconfd &
 
 # Wait for DBus session to be ready (best-effort)
 i=0
-while [ -z "\$DBUS_SESSION_BUS_ADDRESS" ] && [ \$i -lt 30 ]; do
-  i=\$((i+1))
+while [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ $i -lt 50 ]; do
+  i=$((i+1))
   sleep 0.2
 done
 
@@ -230,6 +219,10 @@ xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t in
 xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-off -n -t int -s 0 || true
 xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-sleep -n -t int -s 0 || true
 
+# Ensure custom shortcuts are not ignored
+xfconf-query -c xfce4-keyboard-shortcuts -p /commands/custom/override -n -t bool -s true || true
+xfconf-query -c xfce4-keyboard-shortcuts -p /xfwm4/custom/override -n -t bool -s true || true
+
 # Tiling behavior: keyboard + mouse-to-edge
 xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
 xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
@@ -243,13 +236,14 @@ xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t s
 
 # Centered wallpaper image with black background for all monitors/workspaces
 xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
-  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "\$WALLPAPER_FILE" || true
-  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "\$WALLPAPER_FILE" || true
-  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 1 || true
-  xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0 || true
-  xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1" || true
+  xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 1 || true
+  xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
+  xfconf-query -c xfce4-desktop -p "$base/rgba1" --create -t string -s "0;0;0;1" || true
 done
 
+# Restart desktop + WM so settings take effect immediately
 xfdesktop --replace >/dev/null 2>&1 &
 xfwm4 --replace >/dev/null 2>&1 &
 '
@@ -275,7 +269,7 @@ export HISTSIZE=0
 export HISTFILESIZE=0
 set +o history
 
-# 24/7: never sleep / never blank (GNOME)
+# 24/7: prevent idle/sleep on GNOME
 gsettings set org.gnome.desktop.session idle-delay 0 || true
 gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type "nothing" || true
 gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type "nothing" || true
