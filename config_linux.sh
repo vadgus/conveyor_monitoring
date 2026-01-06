@@ -104,6 +104,13 @@ desktop_env=${desktop_env:-$(pgrep -u $real_user -a | grep -Eo '(xfce4-session|g
 if [[ "$desktop_env" == *"xfce"* ]]; then
   apt-get install -y greybird-gtk-theme elementary-icon-theme
 
+  # Ensure wallpaper image is available locally (centered image on black background)
+  wallpaper_dir="/usr/local/share/backgrounds"
+  wallpaper_file="$wallpaper_dir/cron.png"
+  mkdir -p "$wallpaper_dir"
+  curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/vadgus/debug/main/cron.png" -o "$wallpaper_file" || true
+  chmod 0644 "$wallpaper_file" 2>/dev/null || true
+
   # Apply immediately only if we are inside a GUI session.
   if [[ -n "$DISPLAY" ]]; then
     # force theme
@@ -122,23 +129,32 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     # notifications
     sudo -u "$real_user" xfconf-query -c xfce4-notifyd -p /do-not-disturb -n -t bool -s true || true
 
-    # set black wallpaper for all monitors and workspaces
-    echo "Applying black background to all XFCE monitors..."
+    # tiling: hotkeys + mouse-to-edge snapping/tiling
+    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
+    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
+    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_to_windows -s true || true
+    sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_width -s 30 || true
+
+    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
+    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left" || true
+    sudo -u "$real_user" xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right" || true
+
+    # set centered wallpaper image with black background for all monitors and workspaces
+    echo "Applying centered wallpaper image to all XFCE monitors..."
     paths=$(sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u)
 
     for base in $paths; do
       echo "  → Applying on: $base"
 
-      # remove existing wallpaper config if exists
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" -r 2>/dev/null || true
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" -r 2>/dev/null || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$wallpaper_file" || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "$wallpaper_file" || true
 
-      # set black background
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "" || true
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "" || true
+      # 0 is commonly "Centered" for XFCE image-style
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 0 || true
+
+      # solid color (black) around the image
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/rgba1" --create -t string -s "0;0;0;1" || true
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 0 || true
     done
 
     echo "Restarting xfdesktop..."
@@ -146,15 +162,14 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     sudo -u "$real_user" xfdesktop --replace > /dev/null 2>&1 &
   fi
 
-  # autostart GUI-time theme + hotkeys apply
+  # autostart GUI-time theme + wallpaper + hotkeys apply
   mkdir -p "$user_home/.config/autostart"
   cat <<EOF > "$user_home/.config/autostart/xfce-apply-theme.desktop"
 [Desktop Entry]
 Type=Application
-Name=Apply XFCE Theme, Background and Hotkeys
+Name=Apply XFCE Theme, Wallpaper and Hotkeys
 OnlyShowIn=XFCE;
 Exec=sh -c '
-# Give XFCE time to bring up DBus + xfconfd (especially after autologin)
 sleep 2
 
 # Ensure xfconfd is running
@@ -167,21 +182,29 @@ while [ -z "\$DBUS_SESSION_BUS_ADDRESS" ] && [ \$i -lt 30 ]; do
   sleep 0.2
 done
 
+WALLPAPER_FILE="/usr/local/share/backgrounds/cron.png"
+
 xfconf-query -c xsettings -p /Net/ThemeName -s Greybird-dark || true
 xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce-dark || true
 
-# Fix hotkeys (Win+T, Win+Left, Win+Right) and tiling behavior
-xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
+# Tiling behavior: keyboard + mouse-to-edge
 xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
-xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left_key" || true
-xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right_key" || true
+xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
+xfconf-query -c xfwm4 -p /general/snap_to_windows -s true || true
+xfconf-query -c xfwm4 -p /general/snap_width -s 30 || true
 
+# Hotkeys
+xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right" || true
+
+# Centered wallpaper image with black background for all monitors/workspaces
 xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
-  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "" || true
-  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "" || true
+  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "\$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "\$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 0 || true
   xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0 || true
   xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1" || true
-  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 0 || true
 done
 
 xfdesktop --replace >/dev/null 2>&1 &
