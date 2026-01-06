@@ -99,68 +99,94 @@ desktop_env=$(sudo -u "$real_user" dbus-launch env | grep XDG_CURRENT_DESKTOP | 
 desktop_env=${desktop_env:-$(pgrep -u $real_user -a | grep -Eo '(xfce4-session|gnome-session)' | cut -d- -f1)}
 
 # XFCE setup
-if [[ "$desktop_env" == *"xfce"* ]] && [[ -n "$DISPLAY" ]]; then
+# NOTE: do not rely on $DISPLAY here; when running via "curl | sudo bash" DISPLAY is often empty.
+# We still want to create autostart entries so settings apply after the first GUI login.
+if [[ "$desktop_env" == *"xfce"* ]]; then
   apt-get install -y greybird-gtk-theme elementary-icon-theme
 
-  # force theme
-  sudo -u "$real_user" xfconf-query -c xsettings -p /Net/ThemeName -s "Greybird-dark" || \
-    sudo -u "$real_user" xfconf-query -c xsettings -p /Net/ThemeName --create -t string -s "Greybird-dark"
+  # Apply immediately only if we are inside a GUI session.
+  if [[ -n "$DISPLAY" ]]; then
+    # force theme
+    sudo -u "$real_user" xfconf-query -c xsettings -p /Net/ThemeName -s "Greybird-dark" || \
+      sudo -u "$real_user" xfconf-query -c xsettings -p /Net/ThemeName --create -t string -s "Greybird-dark"
 
-  # force icon theme
-  sudo -u "$real_user" xfconf-query -c xsettings -p /Net/IconThemeName -s "elementary-xfce-dark" || \
-    sudo -u "$real_user" xfconf-query -c xsettings -p /Net/IconThemeName --create -t string -s "elementary-xfce-dark"
+    # force icon theme
+    sudo -u "$real_user" xfconf-query -c xsettings -p /Net/IconThemeName -s "elementary-xfce-dark" || \
+      sudo -u "$real_user" xfconf-query -c xsettings -p /Net/IconThemeName --create -t string -s "elementary-xfce-dark"
 
-  # screensaver
-  if sudo -u "$real_user" xfconf-query -c xfce4-screensaver -l | grep -q /saver; then
-    sudo -u "$real_user" xfconf-query -c xfce4-screensaver -p /saver -s blank-only
+    # screensaver
+    if sudo -u "$real_user" xfconf-query -c xfce4-screensaver -l | grep -q /saver; then
+      sudo -u "$real_user" xfconf-query -c xfce4-screensaver -p /saver -s blank-only
+    fi
+
+    # notifications
+    sudo -u "$real_user" xfconf-query -c xfce4-notifyd -p /do-not-disturb -n -t bool -s true || true
+
+    # set black wallpaper for all monitors and workspaces
+    echo "Applying black background to all XFCE monitors..."
+    paths=$(sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u)
+
+    for base in $paths; do
+      echo "  → Applying on: $base"
+
+      # remove existing wallpaper config if exists
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" -r 2>/dev/null || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" -r 2>/dev/null || true
+
+      # set black background
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "" || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "" || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/rgba1" --create -t string -s "0;0;0;1" || true
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 0 || true
+    done
+
+    echo "Restarting xfdesktop..."
+    sleep 1
+    sudo -u "$real_user" xfdesktop --replace > /dev/null 2>&1 &
   fi
 
-  # notifications
-  sudo -u "$real_user" xfconf-query -c xfce4-notifyd -p /do-not-disturb -n -t bool -s true || true
-
-  # set black wallpaper for all monitors and workspaces
-  echo "Applying black background to all XFCE monitors..."
-  paths=$(sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u)
-
-  for base in $paths; do
-    echo "  → Applying on: $base"
-
-    # remove existing wallpaper config if exists
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" -r 2>/dev/null || true
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" -r 2>/dev/null || true
-
-    # set black background
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "" || true
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "" || true
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/rgba1" --create -t string -s "0;0;0;1" || true
-    sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 0 || true
-  done
-
-  echo "Restarting xfdesktop..."
-  sleep 1
-  sudo -u "$real_user" xfdesktop --replace > /dev/null 2>&1 &
-
-  # autostart GUI-time theme apply
+  # autostart GUI-time theme + hotkeys apply
   mkdir -p "$user_home/.config/autostart"
   cat <<EOF > "$user_home/.config/autostart/xfce-apply-theme.desktop"
 [Desktop Entry]
 Type=Application
-Name=Apply XFCE Theme and Background
+Name=Apply XFCE Theme, Background and Hotkeys
+OnlyShowIn=XFCE;
 Exec=sh -c '
+# Give XFCE time to bring up DBus + xfconfd (especially after autologin)
 sleep 2
-xfconf-query -c xsettings -p /Net/ThemeName -s Greybird-dark
-xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce-dark
-xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
-  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s ""
-  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s ""
-  xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0
-  xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1"
-  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 0
+
+# Ensure xfconfd is running
+pgrep -x xfconfd >/dev/null 2>&1 || xfconfd &
+
+# Wait for DBus session to be ready (best-effort)
+i=0
+while [ -z "\$DBUS_SESSION_BUS_ADDRESS" ] && [ \$i -lt 30 ]; do
+  i=\$((i+1))
+  sleep 0.2
 done
-xfdesktop --replace
-xfwm4 --replace
-' &
+
+xfconf-query -c xsettings -p /Net/ThemeName -s Greybird-dark || true
+xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce-dark || true
+
+# Fix hotkeys (Win+T, Win+Left, Win+Right) and tiling behavior
+xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
+xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left_key" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right_key" || true
+
+xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
+  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "" || true
+  xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0 || true
+  xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 0 || true
+done
+
+xfdesktop --replace >/dev/null 2>&1 &
+xfwm4 --replace >/dev/null 2>&1 &
+'
 X-GNOME-Autostart-enabled=true
 EOF
   chown "$real_user:$real_user" "$user_home/.config/autostart/xfce-apply-theme.desktop"
