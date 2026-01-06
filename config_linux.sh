@@ -197,8 +197,8 @@ pgrep -x xfconfd >/dev/null 2>&1 || xfconfd &
 
 # Wait for DBus session to be ready (best-effort)
 i=0
-while [ -z "$DBUS_SESSION_BUS_ADDRESS" ] && [ $i -lt 50 ]; do
-  i=$((i+1))
+while [ -z "\$DBUS_SESSION_BUS_ADDRESS" ] && [ \$i -lt 50 ]; do
+  i=\$((i+1))
   sleep 0.2
 done
 
@@ -229,21 +229,36 @@ xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
 xfconf-query -c xfwm4 -p /general/snap_to_windows -s true || true
 xfconf-query -c xfwm4 -p /general/snap_width -s 30 || true
 
+# Remove potential conflicts where Super+Arrows are bound as commands (best-effort)
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/custom/<Super>Left" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/custom/<Super>Right" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/custom/<Super>Up" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/custom/<Super>Down" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/default/<Super>Left" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/default/<Super>Right" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/default/<Super>Up" 2>/dev/null || true
+xfconf-query -c xfce4-keyboard-shortcuts -r -p "/commands/default/<Super>Down" 2>/dev/null || true
+
 # Hotkeys
 xfconf-query -c xfce4-keyboard-shortcuts -p "/commands/custom/<Super>t" -n -t string -s "xfce4-terminal" || true
-xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left" || true
-xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right" || true
+
+# XFWM4 expects *_key actions (this matches xfconf dumps on Xubuntu 24.04)
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Left" -n -t string -s "tile_left_key" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t string -s "tile_right_key" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Up" -n -t string -s "tile_up_key" || true
+xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Down" -n -t string -s "tile_down_key" || true
 
 # Centered wallpaper image with black background for all monitors/workspaces
 xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
-  xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$WALLPAPER_FILE" || true
-  xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "$WALLPAPER_FILE" || true
-  xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 1 || true
-  xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
-  xfconf-query -c xfce4-desktop -p "$base/rgba1" --create -t string -s "0;0;0;1" || true
+  xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "\$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "\$WALLPAPER_FILE" || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 1 || true
+  xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0 || true
+  xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1" || true
 done
 
-# Restart desktop + WM so settings take effect immediately
+# Restart settings daemon + desktop + WM so settings/hotkeys take effect
+xfsettingsd --replace >/dev/null 2>&1 &
 xfdesktop --replace >/dev/null 2>&1 &
 xfwm4 --replace >/dev/null 2>&1 &
 '
