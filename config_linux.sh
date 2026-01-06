@@ -67,6 +67,29 @@ autologin-user=$real_user
 autologin-user-timeout=0
 EOF
 
+# never blank/turn off screen via X server (LightDM)
+cat <<'EOF' > /etc/lightdm/lightdm.conf.d/99-no-blanking.conf
+[Seat:*]
+xserver-command=X -s 0 -dpms
+EOF
+
+# disable system sleep/hibernate (24/7 machines)
+systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null || true
+systemctl mask suspend-then-hibernate.target 2>/dev/null || true
+systemctl disable sleep.target suspend.target hibernate.target hybrid-sleep.target 2>/dev/null || true
+
+# logind: do not suspend on idle/lid (safe defaults for 24/7)
+mkdir -p /etc/systemd/logind.conf.d
+cat <<'EOF' > /etc/systemd/logind.conf.d/99-24-7.conf
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+IdleAction=ignore
+IdleActionSec=0
+EOF
+systemctl restart systemd-logind 2>/dev/null || true
+
 # disable unused services
 systemctl disable unattended-upgrades || true
 systemctl disable apport || true
@@ -129,6 +152,13 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     # notifications
     sudo -u "$real_user" xfconf-query -c xfce4-notifyd -p /do-not-disturb -n -t bool -s true || true
 
+    # 24/7: disable DPMS and blanking (Xfce session)
+    sudo -u "$real_user" bash -lc 'xset s off || true; xset s noblank || true; xset -dpms || true' || true
+    sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false || true
+    sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0 || true
+    sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-off -n -t int -s 0 || true
+    sudo -u "$real_user" xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-sleep -n -t int -s 0 || true
+
     # tiling: hotkeys + mouse-to-edge snapping/tiling
     sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
     sudo -u "$real_user" xfconf-query -c xfwm4 -p /general/snap_to_border -s true || true
@@ -149,8 +179,9 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$wallpaper_file" || true
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-path" --create -t string -s "$wallpaper_file" || true
 
-      # 0 is commonly "Centered" for XFCE image-style
-      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 0 || true
+      # Centered style (XFCE GUI shows "Centered")
+      # Common enum: 1 = Centered
+      sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/image-style" --create -t int -s 1 || true
 
       # solid color (black) around the image
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/color-style" --create -t int -s 0 || true
@@ -162,12 +193,12 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
     sudo -u "$real_user" xfdesktop --replace > /dev/null 2>&1 &
   fi
 
-  # autostart GUI-time theme + wallpaper + hotkeys apply
+  # autostart GUI-time theme + wallpaper + hotkeys + 24/7 apply
   mkdir -p "$user_home/.config/autostart"
   cat <<EOF > "$user_home/.config/autostart/xfce-apply-theme.desktop"
 [Desktop Entry]
 Type=Application
-Name=Apply XFCE Theme, Wallpaper and Hotkeys
+Name=Apply XFCE Theme, Wallpaper, Hotkeys and 24/7
 OnlyShowIn=XFCE;
 Exec=sh -c '
 sleep 2
@@ -184,8 +215,20 @@ done
 
 WALLPAPER_FILE="/usr/local/share/backgrounds/cron.png"
 
+# 24/7: never blank/DPMS in X session
+xset s off || true
+xset s noblank || true
+xset -dpms || true
+
+# Theme
 xfconf-query -c xsettings -p /Net/ThemeName -s Greybird-dark || true
 xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce-dark || true
+
+# 24/7: XFCE Power Manager (best-effort)
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false || true
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0 || true
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-off -n -t int -s 0 || true
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-on-ac-sleep -n -t int -s 0 || true
 
 # Tiling behavior: keyboard + mouse-to-edge
 xfconf-query -c xfwm4 -p /general/tile_on_move -s true || true
@@ -202,7 +245,7 @@ xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Right" -n -t s
 xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
   xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "\$WALLPAPER_FILE" || true
   xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "\$WALLPAPER_FILE" || true
-  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 0 || true
+  xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 1 || true
   xfconf-query -c xfce4-desktop -p "\$base/color-style" --create -t int -s 0 || true
   xfconf-query -c xfce4-desktop -p "\$base/rgba1" --create -t string -s "0;0;0;1" || true
 done
@@ -232,20 +275,32 @@ export HISTSIZE=0
 export HISTFILESIZE=0
 set +o history
 
+# 24/7: never sleep / never blank (GNOME)
+gsettings set org.gnome.desktop.session idle-delay 0 || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type "nothing" || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type "nothing" || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-timeout 0 || true
+gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-timeout 0 || true
+
 # Enable Ubuntu dark mode (since 22.04+)
-gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark' || true
 
 # Black desktop background
-gsettings set org.gnome.desktop.background picture-uri ''
-gsettings set org.gnome.desktop.background picture-options 'none'
-gsettings set org.gnome.desktop.background primary-color '#000000'
-gsettings set org.gnome.desktop.background color-shading-type 'solid'
+gsettings set org.gnome.desktop.background picture-uri '' || true
+gsettings set org.gnome.desktop.background picture-options 'none' || true
+gsettings set org.gnome.desktop.background primary-color '#000000' || true
+gsettings set org.gnome.desktop.background color-shading-type 'solid' || true
 
 # Black screensaver
-gsettings set org.gnome.desktop.screensaver picture-uri ''
-gsettings set org.gnome.desktop.screensaver picture-options 'none'
-gsettings set org.gnome.desktop.screensaver primary-color '#000000'
-gsettings set org.gnome.desktop.screensaver color-shading-type 'solid'
+gsettings set org.gnome.desktop.screensaver picture-uri '' || true
+gsettings set org.gnome.desktop.screensaver picture-options 'none' || true
+gsettings set org.gnome.desktop.screensaver primary-color '#000000' || true
+gsettings set org.gnome.desktop.screensaver color-shading-type 'solid' || true
+
+# X session best-effort (if Xorg)
+xset s off >/dev/null 2>&1 || true
+xset s noblank >/dev/null 2>&1 || true
+xset -dpms >/dev/null 2>&1 || true
 
 # Re-enable history just in case
 set -o history
@@ -263,8 +318,8 @@ Exec=$user_home/.config/gnome-apply-dark.sh
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
-Name=Apply GNOME Dark Mode
-Comment=Enable dark mode and black background/screensaver
+Name=Apply GNOME Dark Mode and 24/7
+Comment=Enable dark mode, black background/screensaver, disable idle/sleep
 EOF
 
   chown "$real_user:$real_user" "$user_home/.config/autostart/gnome-apply-dark.desktop"
