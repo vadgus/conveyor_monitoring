@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Run on Linux in one line:
+# curl -fsSL https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/install_pycharm.sh -o /tmp/install_pycharm.sh && sh /tmp/install_pycharm.sh
+
 set -eu
 
 INSTALL_DIR="/opt/pycharm"
@@ -10,7 +13,7 @@ TMP_DIR="$(mktemp -d)"
 GITHUB_REPO="JetBrains/intellij-community"
 GITHUB_RELEASES_API="https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=100"
 
-# Fallback URLs if GitHub API parsing fails
+# Fallback URLs
 FALLBACK_X86_URL="https://download.jetbrains.com/python/pycharm-2025.3.3.tar.gz"
 FALLBACK_ARM_URL="https://download.jetbrains.com/python/pycharm-2025.3.3-aarch64.tar.gz"
 
@@ -23,11 +26,44 @@ log() {
     printf '%s\n' "$1"
 }
 
+fail() {
+    printf 'ERROR: %s\n' "$1" >&2
+    exit 1
+}
+
 need_cmd() {
-    command -v "$1" >/dev/null 2>&1 || {
-        echo "Required command not found: $1" >&2
-        exit 1
-    }
+    command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
+}
+
+check_supported_os() {
+    OS_NAME="$(uname -s)"
+
+    [ "$OS_NAME" = "Linux" ] || fail "This script supports Linux only. Detected: $OS_NAME"
+
+    [ -f /etc/os-release ] || fail "/etc/os-release not found. Unsupported Linux distribution."
+
+    # shellcheck disable=SC1091
+    . /etc/os-release
+
+    DIST_ID="${ID:-}"
+    DIST_LIKE="${ID_LIKE:-}"
+
+    case "$DIST_ID" in
+        ubuntu|xubuntu|linuxmint|pop|elementary|zorin|neon|debian)
+            ;;
+        *)
+            case " $DIST_LIKE " in
+                *" ubuntu "*|*" debian "*)
+                    ;;
+                *)
+                    fail "Unsupported distribution: ID=${DIST_ID:-unknown}, ID_LIKE=${DIST_LIKE:-unknown}. Supported: Ubuntu/Xubuntu or Debian-based systems with apt."
+                    ;;
+            esac
+            ;;
+    esac
+
+    command -v apt >/dev/null 2>&1 || fail "apt not found. This script requires an apt-based system."
+    command -v sudo >/dev/null 2>&1 || fail "sudo not found."
 }
 
 detect_arch() {
@@ -42,8 +78,7 @@ detect_arch() {
             FALLBACK_URL="$FALLBACK_ARM_URL"
             ;;
         *)
-            echo "Unsupported architecture: $ARCH" >&2
-            exit 1
+            fail "Unsupported architecture: $ARCH"
             ;;
     esac
 }
@@ -52,8 +87,22 @@ extract_version_from_url() {
     printf '%s' "$1" | sed -nE 's#.*pycharm-([0-9]{4}\.[0-9]+\.[0-9]+(\.[0-9]+)?)(-aarch64)?\.tar\.gz#\1#p'
 }
 
-version_gt() {
-    [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ] && [ "$1" != "$2" ]
+get_installed_version() {
+    if [ -f "$INSTALL_DIR/product-info.json" ]; then
+        jq -r '.version // empty' "$INSTALL_DIR/product-info.json" 2>/dev/null || true
+        return
+    fi
+
+    if [ -f "$INSTALL_DIR/build.txt" ]; then
+        cat "$INSTALL_DIR/build.txt" 2>/dev/null || true
+        return
+    fi
+
+    printf ''
+}
+
+is_installed() {
+    [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/bin/pycharm" ]
 }
 
 install_deps() {
@@ -97,8 +146,19 @@ get_latest_pycharm_asset_url() {
     fi
 }
 
+resolve_download_url() {
+    LATEST_URL="$(get_latest_pycharm_asset_url || true)"
+
+    if [ -n "$LATEST_URL" ]; then
+        printf '%s\n' "$LATEST_URL"
+    else
+        printf '%s\n' "$FALLBACK_URL"
+    fi
+}
+
 download_and_install() {
     URL="$1"
+    VERSION="$(extract_version_from_url "$URL")"
     ARCHIVE="$TMP_DIR/pycharm.tar.gz"
     EXTRACT_DIR="$TMP_DIR/extracted"
 
@@ -111,10 +171,7 @@ download_and_install() {
 
     EXTRACTED_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 
-    if [ -z "$EXTRACTED_DIR" ]; then
-        echo "Failed to detect extracted PyCharm directory." >&2
-        exit 1
-    fi
+    [ -n "$EXTRACTED_DIR" ] || fail "Failed to detect extracted PyCharm directory."
 
     log "Installing to $INSTALL_DIR ..."
     sudo rm -rf "$INSTALL_DIR"
@@ -141,50 +198,104 @@ StartupNotify=true
 EOF
 
     chmod +x "$DESKTOP_FILE"
+
+    log "Installed PyCharm version: ${VERSION:-unknown}"
+    log "Run it with: pycharm"
+}
+
+do_install() {
+    URL="$(resolve_download_url)"
+    download_and_install "$URL"
+}
+
+do_update() {
+    if ! is_installed; then
+        log "PyCharm is not installed in $INSTALL_DIR"
+        log "Starting install instead..."
+        do_install
+        return
+    fi
+
+    INSTALLED_VERSION="$(get_installed_version)"
+    LATEST_URL="$(resolve_download_url)"
+    LATEST_VERSION="$(extract_version_from_url "$LATEST_URL")"
+
+    log "Installed version: ${INSTALLED_VERSION:-unknown}"
+    log "Latest available version: ${LATEST_VERSION:-unknown}"
+
+    if [ -n "$INSTALLED_VERSION" ] && [ -n "$LATEST_VERSION" ] && [ "$INSTALLED_VERSION" = "$LATEST_VERSION" ]; then
+        log "PyCharm is already up to date."
+        exit 0
+    fi
+
+    download_and_install "$LATEST_URL"
+}
+
+do_uninstall() {
+    if ! is_installed; then
+        log "PyCharm is not installed in $INSTALL_DIR"
+        exit 0
+    fi
+
+    log "Removing installation..."
+    sudo rm -rf "$INSTALL_DIR"
+
+    if [ -L "$BIN_LINK" ] || [ -f "$BIN_LINK" ]; then
+        sudo rm -f "$BIN_LINK"
+    fi
+
+    if [ -f "$DESKTOP_FILE" ]; then
+        rm -f "$DESKTOP_FILE"
+    fi
+
+    log "PyCharm uninstalled."
+}
+
+show_menu_for_installed() {
+    INSTALLED_VERSION="$(get_installed_version)"
+    printf '\n'
+    printf 'PyCharm is already installed'
+    if [ -n "$INSTALLED_VERSION" ]; then
+        printf ' (version: %s)' "$INSTALLED_VERSION"
+    fi
+    printf '.\n'
+    printf 'Choose action:\n'
+    printf '1) update\n'
+    printf '2) uninstall\n'
+    printf '> '
+    read -r CHOICE
+
+    case "$CHOICE" in
+        1|update|u)
+            do_update
+            ;;
+        2|uninstall|remove|delete)
+            do_uninstall
+            ;;
+        *)
+            fail "Unknown choice: $CHOICE"
+            ;;
+    esac
 }
 
 main() {
     need_cmd uname
-    need_cmd sudo
-    need_cmd curl
-    need_cmd jq
-    need_cmd tar
-    need_cmd sort
     need_cmd find
     need_cmd head
     need_cmd sed
     need_cmd mktemp
 
+    check_supported_os
     detect_arch
     install_deps
 
-    DEFAULT_VERSION="$(extract_version_from_url "$FALLBACK_URL")"
-    FINAL_URL="$FALLBACK_URL"
-    FINAL_VERSION="$DEFAULT_VERSION"
-
-    log "Detected architecture: $ARCH"
-    log "Fallback version: $DEFAULT_VERSION"
-
-    LATEST_URL="$(get_latest_pycharm_asset_url || true)"
-
-    if [ -n "$LATEST_URL" ]; then
-        LATEST_VERSION="$(extract_version_from_url "$LATEST_URL")"
-
-        if [ -n "$LATEST_VERSION" ]; then
-            FINAL_URL="$LATEST_URL"
-            FINAL_VERSION="$LATEST_VERSION"
-            log "Found latest PyCharm release on GitHub: $FINAL_VERSION"
-        else
-            log "Failed to parse version from GitHub asset URL. Using fallback."
-        fi
+    if is_installed; then
+        show_menu_for_installed
     else
-        log "Could not detect latest PyCharm release from GitHub. Using fallback."
+        log "PyCharm is not installed in $INSTALL_DIR"
+        log "Starting install..."
+        do_install
     fi
-
-    download_and_install "$FINAL_URL"
-
-    log "Installed PyCharm version: $FINAL_VERSION"
-    log "Run it with: pycharm"
 }
 
 main "$@"
