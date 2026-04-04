@@ -11,8 +11,8 @@ TIMEZONE="Europe/Nicosia"
 LOCALE="en_US.UTF-8"
 
 WORKDIR="/tmp/arch-bootstrap"
-PACMAN_CONF="$WORKDIR/pacman.conf"
-MIRRORLIST="$WORKDIR/mirrorlist"
+PACMAN_CONF="${WORKDIR}/pacman.conf"
+BOOTSTRAP_MIRRORLIST="${WORKDIR}/mirrorlist"
 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -51,13 +51,11 @@ list_real_disks() {
     local dev
     for dev in /sys/block/*; do
         dev="$(basename "$dev")"
-
         case "$dev" in
             loop*|ram*|zram*|sr*|md*|dm-*)
                 continue
                 ;;
         esac
-
         if [[ -b "/dev/$dev" ]]; then
             echo "$dev"
         fi
@@ -178,19 +176,20 @@ format_partitions() {
 mount_partitions() {
     echo
     echo "Mounting partitions..."
+    mkdir -p /mnt
     mount "$ROOT_PART" /mnt
     mkdir -p /mnt/boot
     mount "$EFI_PART" /mnt/boot
 }
 
-prepare_pacman_bootstrap() {
+prepare_bootstrap_pacman() {
     echo
     echo "Preparing pacman bootstrap config..."
     mkdir -p "$WORKDIR"
     mkdir -p /var/lib/pacman
     mkdir -p /var/cache/pacman/pkg
 
-    cat > "$MIRRORLIST" <<'EOF'
+    cat > "$BOOTSTRAP_MIRRORLIST" <<'EOF'
 Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
 Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
 Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
@@ -211,10 +210,10 @@ HookDir = /etc/pacman.d/hooks/
 HoldPkg = pacman glibc
 
 [core]
-Include = $MIRRORLIST
+Include = $BOOTSTRAP_MIRRORLIST
 
 [extra]
-Include = $MIRRORLIST
+Include = $BOOTSTRAP_MIRRORLIST
 EOF
 }
 
@@ -222,9 +221,33 @@ install_base() {
     echo
     echo "Installing base system..."
     pacstrap -C "$PACMAN_CONF" /mnt \
-        base linux linux-firmware nano networkmanager sudo grub efibootmgr archlinux-keyring
+        base \
+        linux \
+        linux-firmware \
+        nano \
+        networkmanager \
+        sudo \
+        grub \
+        efibootmgr \
+        archlinux-keyring
 
     genfstab -U /mnt >> /mnt/etc/fstab
+}
+
+prepare_installed_system_repos() {
+    echo
+    echo "Preparing mirrors inside installed Arch..."
+    mkdir -p /mnt/etc/pacman.d
+
+    cat > /mnt/etc/pacman.d/mirrorlist <<'EOF'
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
+EOF
+
+    if [[ -f /mnt/etc/pacman.conf ]]; then
+        sed -i 's|^#\s*ParallelDownloads|ParallelDownloads|' /mnt/etc/pacman.conf || true
+    fi
 }
 
 configure_system() {
@@ -247,6 +270,22 @@ cat > /etc/hosts <<HOSTS
 ::1         localhost
 127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
 HOSTS
+
+cat > /etc/vconsole.conf <<VCONSOLE
+KEYMAP=us
+FONT=
+VCONSOLE
+
+mkdir -p /etc/pacman.d
+if [[ ! -f /etc/pacman.d/mirrorlist ]]; then
+cat > /etc/pacman.d/mirrorlist <<MIRRORS
+Server = https://geo.mirror.pkgbuild.com/\\$repo/os/\\$arch
+Server = https://mirror.rackspace.com/archlinux/\\$repo/os/\\$arch
+Server = https://mirrors.kernel.org/archlinux/\\$repo/os/\\$arch
+MIRRORS
+fi
+
+sed -i 's/^#Server/Server/' /etc/pacman.d/mirrorlist || true
 
 pacman-key --init
 pacman-key --populate archlinux
@@ -312,8 +351,9 @@ main() {
     partition_disk
     format_partitions
     mount_partitions
-    prepare_pacman_bootstrap
+    prepare_bootstrap_pacman
     install_base
+    prepare_installed_system_repos
     configure_system
     finish_message
 }
