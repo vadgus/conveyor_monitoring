@@ -57,13 +57,26 @@ chmod 0440 "/etc/sudoers.d/$real_user"
 echo "==> Locale & timezone"
 grep -q '^en_US.UTF-8 UTF-8$' /etc/locale.gen || echo 'en_US.UTF-8 UTF-8' >> /etc/locale.gen
 locale-gen
+
 cat > /etc/locale.conf <<'EOF'
 LANG=en_US.UTF-8
-LC_TIME=en_ZW.UTF-8
+LC_ALL=en_US.UTF-8
+EOF
+
+cat > /etc/environment <<'EOF'
+LANG=en_US.UTF-8
+LC_ALL=en_US.UTF-8
+EOF
+
+mkdir -p /etc/systemd/system.conf.d
+cat > /etc/systemd/system.conf.d/locale.conf <<'EOF'
+[Manager]
+DefaultEnvironment=LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 EOF
 
 ln -sf /usr/share/zoneinfo/Europe/Nicosia /etc/localtime
 hwclock --systohc || true
+systemctl daemon-reexec || true
 
 echo "==> LightDM autologin"
 mkdir -p /etc/lightdm/lightdm.conf.d
@@ -116,6 +129,14 @@ if ! grep -q "^alias upgrade=" "$bashrc_file"; then
     echo "alias upgrade='sudo pacman -Syu --noconfirm'" >> "$bashrc_file"
 fi
 
+if ! grep -q "^export LANG=en_US.UTF-8$" "$bashrc_file"; then
+    echo 'export LANG=en_US.UTF-8' >> "$bashrc_file"
+fi
+
+if ! grep -q "^export LC_ALL=en_US.UTF-8$" "$bashrc_file"; then
+    echo 'export LC_ALL=en_US.UTF-8' >> "$bashrc_file"
+fi
+
 echo "==> Wallpaper"
 wallpaper_dir="/usr/local/share/backgrounds"
 wallpaper_file="$wallpaper_dir/cron.png"
@@ -151,6 +172,9 @@ EOF
     cat > "$user_home/.local/bin/apply_xfce_wallpaper.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 
 wallpaper_file="$wallpaper_file"
 
