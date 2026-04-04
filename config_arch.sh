@@ -13,7 +13,7 @@ if [[ -z "${real_user:-}" ]]; then
 fi
 
 user_home="$(getent passwd "$real_user" | cut -d: -f6)"
-if [[ -z "${user_home:-}" || ! -d "$user_home" ]]; then
+if [[ -z "${user_home:-}" || ! -d "${user_home}" ]]; then
     user_home="/home/$real_user"
 fi
 
@@ -175,36 +175,28 @@ set -euo pipefail
 
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
+export DISPLAY=:0
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/\$(id -u)/bus"
 
 wallpaper_file="$wallpaper_file"
 
-sleep 8
-
-if ! command -v xfconf-query >/dev/null 2>&1; then
-    exit 0
-fi
-
-if ! command -v xfdesktop >/dev/null 2>&1; then
-    exit 0
-fi
-
-for _ in \$(seq 1 20); do
-    if xfconf-query -c xfce4-desktop -l >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
+sleep 3
 
 xfconf-query -c xfce4-desktop -p /backdrop/single-workspace-mode -n -t bool -s true >/dev/null 2>&1 || true
 
-last_image_paths=\$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$' || true)
-image_style_paths=\$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/image-style$' || true)
+for monitor in monitor0 monitorHDMI-1; do
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/last-image" -n -t string -s "\$wallpaper_file" >/dev/null 2>&1 || \
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/last-image" -s "\$wallpaper_file" >/dev/null 2>&1 || true
 
-for p in \$last_image_paths; do
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -n -t int -s 3 >/dev/null 2>&1 || \
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -s 3 >/dev/null 2>&1 || true
+done
+
+for p in \$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$' || true); do
     xfconf-query -c xfce4-desktop -p "\$p" -s "\$wallpaper_file" >/dev/null 2>&1 || true
 done
 
-for p in \$image_style_paths; do
+for p in \$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/image-style$' || true); do
     xfconf-query -c xfce4-desktop -p "\$p" -s 3 >/dev/null 2>&1 || true
 done
 
