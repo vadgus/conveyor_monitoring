@@ -13,7 +13,7 @@ LOCALE="en_US.UTF-8"
 require_root_tools() {
     sudo -v
     sudo apt update
-    sudo apt install -y arch-install-scripts gdisk parted dosfstools e2fsprogs
+    sudo apt install -y arch-install-scripts gdisk parted dosfstools e2fsprogs pacman-package-manager
 }
 
 print_disks() {
