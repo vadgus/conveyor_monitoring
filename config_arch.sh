@@ -47,8 +47,7 @@ pacman -S --needed --noconfirm \
     xorg-server \
     dbus \
     xfconf \
-    greybird-gtk-theme \
-    elementary-icon-theme
+    adwaita-icon-theme
 
 echo "==> Sudo without password"
 mkdir -p /etc/sudoers.d
@@ -144,7 +143,7 @@ EOF
 [Desktop Entry]
 Type=Application
 Name=Apply XFCE Theme
-Exec=sh -c 'xfconf-query -c xsettings -p /Net/ThemeName -s Greybird >/dev/null 2>&1 || true; xfconf-query -c xsettings -p /Net/IconThemeName -s elementary-xfce >/dev/null 2>&1 || true'
+Exec=sh -c 'xfconf-query -c xsettings -p /Net/ThemeName -s Adwaita-dark >/dev/null 2>&1 || true; xfconf-query -c xsettings -p /Net/IconThemeName -s Adwaita >/dev/null 2>&1 || true'
 X-GNOME-Autostart-enabled=true
 EOF
 
