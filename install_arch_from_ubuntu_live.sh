@@ -10,34 +10,73 @@ USERNAME="nuc"
 TIMEZONE="Europe/Nicosia"
 LOCALE="en_US.UTF-8"
 
-if [[ "$(id -u)" -eq 0 ]]; then
-    SUDO=""
-else
-    SUDO="sudo"
-fi
-
 WORKDIR="/tmp/arch-bootstrap"
 PACMAN_CONF="$WORKDIR/pacman.conf"
 MIRRORLIST="$WORKDIR/mirrorlist"
 
-require_tools() {
-    ${SUDO} apt update
-    ${SUDO} apt install -y \
-        arch-install-scripts \
-        pacman-package-manager \
-        gdisk parted dosfstools e2fsprogs curl
-}
-
-check_internet() {
-    echo "Checking internet..."
-    ping -c 1 archlinux.org >/dev/null || {
-        echo "No internet"
+need_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Missing command: $1"
         exit 1
     }
 }
 
-cleanup() {
-    ${SUDO} umount -R /mnt 2>/dev/null || true
+require_tools() {
+    apt update
+    apt install -y \
+        arch-install-scripts \
+        pacman-package-manager \
+        gdisk \
+        parted \
+        dosfstools \
+        e2fsprogs \
+        curl \
+        util-linux
+}
+
+check_internet() {
+    echo
+    echo "Checking internet..."
+    ping -c 1 archlinux.org >/dev/null 2>&1 || {
+        echo "Error: internet connection is required."
+        exit 1
+    }
+}
+
+cleanup_mounts() {
+    umount -R /mnt 2>/dev/null || true
+}
+
+list_real_disks() {
+    local dev
+    for dev in /sys/block/*; do
+        dev="$(basename "$dev")"
+
+        case "$dev" in
+            loop*|ram*|zram*|sr*|md*|dm-*)
+                continue
+                ;;
+        esac
+
+        if [[ -b "/dev/$dev" ]]; then
+            echo "$dev"
+        fi
+    done
+}
+
+disk_size_human() {
+    local disk="$1"
+    lsblk -dn -o SIZE "/dev/$disk" 2>/dev/null | head -n1 | xargs
+}
+
+disk_model() {
+    local disk="$1"
+    cat "/sys/block/$disk/device/model" 2>/dev/null | xargs || true
+}
+
+disk_tran() {
+    local disk="$1"
+    lsblk -dn -o TRAN "/dev/$disk" 2>/dev/null | head -n1 | xargs
 }
 
 select_disk() {
@@ -45,96 +84,131 @@ select_disk() {
     echo "Available disks:"
     echo
 
-    mapfile -t DISKS < <(lsblk -dn -o NAME,TYPE | awk '$2=="disk"{print $1}')
+    mapfile -t DISKS < <(list_real_disks)
 
-    if [ "${#DISKS[@]}" -eq 0 ]; then
-        echo "No disks found"
-        lsblk
+    if [[ "${#DISKS[@]}" -eq 0 ]]; then
+        echo "No disks found."
+        echo
+        echo "Debug:"
+        ls /sys/block || true
+        echo
+        lsblk || true
         exit 1
     fi
 
-    DEFAULT=1
+    local DEFAULT_INDEX=""
+    local i idx name size model tran
 
     for i in "${!DISKS[@]}"; do
-        idx=$((i+1))
+        idx=$((i + 1))
         name="${DISKS[$i]}"
-        disk="/dev/$name"
+        size="$(disk_size_human "$name")"
+        model="$(disk_model "$name")"
+        tran="$(disk_tran "$name")"
 
-        size=$(lsblk -dn -o SIZE "$disk")
-        model=$(lsblk -dn -o MODEL "$disk" | xargs)
-        tran=$(lsblk -dn -o TRAN "$disk")
+        [[ -n "$size" ]] || size="-"
+        [[ -n "$model" ]] || model="-"
+        [[ -n "$tran" ]] || tran="-"
 
-        printf "%2d) %-14s %-8s %-6s %s\n" "$idx" "$disk" "${size:-?}" "${tran:-?}" "${model:-?}"
+        printf "%2d) %-14s  %-8s  %-6s  %s\n" "$idx" "/dev/$name" "$size" "$tran" "$model"
 
-        if [[ "$name" == nvme* ]]; then
-            DEFAULT=$idx
+        if [[ -z "$DEFAULT_INDEX" ]]; then
+            if [[ "$name" == nvme* ]]; then
+                DEFAULT_INDEX="$idx"
+            elif [[ "$tran" != "usb" ]]; then
+                DEFAULT_INDEX="$idx"
+            fi
         fi
     done
 
-    echo
-    read -rp "Select disk [default $DEFAULT]: " CHOICE
-    CHOICE="${CHOICE:-$DEFAULT}"
-
-    DISK="/dev/${DISKS[$((CHOICE-1))]}"
+    [[ -n "$DEFAULT_INDEX" ]] || DEFAULT_INDEX="1"
 
     echo
-    echo "Selected: $DISK"
-    lsblk "$DISK"
+    read -r -p "Select disk number [default ${DEFAULT_INDEX}]: " CHOICE
+    CHOICE="${CHOICE:-$DEFAULT_INDEX}"
 
-    read -rp "Type YES to confirm wipe: " CONFIRM
-    [[ "$CONFIRM" == "YES" ]] || exit 1
-}
+    if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || (( CHOICE < 1 || CHOICE > ${#DISKS[@]} )); then
+        echo "Invalid selection."
+        exit 1
+    fi
 
-get_parts() {
-    if [[ "$DISK" == *nvme* ]]; then
-        EFI="${DISK}p1"
-        ROOT="${DISK}p2"
-    else
-        EFI="${DISK}1"
-        ROOT="${DISK}2"
+    DISK="/dev/${DISKS[$((CHOICE - 1))]}"
+
+    echo
+    echo "Selected disk: $DISK"
+    lsblk "$DISK" || true
+    echo
+    read -r -p "ALL DATA ON $DISK WILL BE DESTROYED. Type YES to continue: " CONFIRM
+
+    if [[ "$CONFIRM" != "YES" ]]; then
+        echo "Cancelled."
+        exit 1
     fi
 }
 
-partition() {
-    echo "Partitioning..."
-    ${SUDO} sgdisk --zap-all "$DISK"
-    ${SUDO} parted -s "$DISK" mklabel gpt
-    ${SUDO} parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
-    ${SUDO} parted -s "$DISK" set 1 esp on
-    ${SUDO} parted -s "$DISK" mkpart primary ext4 513MiB 100%
-    get_parts
+get_partitions() {
+    if [[ "$DISK" == *"nvme"* ]]; then
+        EFI_PART="${DISK}p1"
+        ROOT_PART="${DISK}p2"
+    else
+        EFI_PART="${DISK}1"
+        ROOT_PART="${DISK}2"
+    fi
+}
+
+partition_disk() {
+    echo
+    echo "Partitioning $DISK..."
+    sgdisk --zap-all "$DISK"
+    parted -s "$DISK" mklabel gpt
+    parted -s "$DISK" mkpart ESP fat32 1MiB 513MiB
+    parted -s "$DISK" set 1 esp on
+    parted -s "$DISK" mkpart primary ext4 513MiB 100%
+    get_partitions
     sleep 2
 }
 
-format() {
-    echo "Formatting..."
-    ${SUDO} mkfs.fat -F32 "$EFI"
-    ${SUDO} mkfs.ext4 -F "$ROOT"
+format_partitions() {
+    echo
+    echo "Formatting partitions..."
+    mkfs.fat -F32 "$EFI_PART"
+    mkfs.ext4 -F "$ROOT_PART"
 }
 
-mount_fs() {
-    echo "Mounting..."
-    ${SUDO} mount "$ROOT" /mnt
-    ${SUDO} mkdir -p /mnt/boot
-    ${SUDO} mount "$EFI" /mnt/boot
+mount_partitions() {
+    echo
+    echo "Mounting partitions..."
+    mount "$ROOT_PART" /mnt
+    mkdir -p /mnt/boot
+    mount "$EFI_PART" /mnt/boot
 }
 
-prepare_pacman() {
+prepare_pacman_bootstrap() {
+    echo
+    echo "Preparing pacman bootstrap config..."
     mkdir -p "$WORKDIR"
-    mkdir -p /var/lib/pacman /var/cache/pacman/pkg
+    mkdir -p /var/lib/pacman
+    mkdir -p /var/cache/pacman/pkg
 
-    cat > "$MIRRORLIST" <<EOF
-Server = https://geo.mirror.pkgbuild.com/\$repo/os/\$arch
-Server = https://mirror.rackspace.com/archlinux/\$repo/os/\$arch
-Server = https://mirrors.kernel.org/archlinux/\$repo/os/\$arch
+    cat > "$MIRRORLIST" <<'EOF'
+Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+Server = https://mirror.rackspace.com/archlinux/$repo/os/$arch
+Server = https://mirrors.kernel.org/archlinux/$repo/os/$arch
 EOF
 
     cat > "$PACMAN_CONF" <<EOF
 [options]
 Architecture = auto
+CheckSpace
+ParallelDownloads = 5
 SigLevel = Never
+LocalFileSigLevel = Never
 CacheDir = /var/cache/pacman/pkg/
 DBPath = /var/lib/pacman/
+RootDir = /
+GPGDir = /etc/pacman.d/gnupg/
+HookDir = /etc/pacman.d/hooks/
+HoldPkg = pacman glibc
 
 [core]
 Include = $MIRRORLIST
@@ -145,49 +219,65 @@ EOF
 }
 
 install_base() {
-    echo "Installing base..."
-    ${SUDO} pacstrap -C "$PACMAN_CONF" /mnt \
-        base linux linux-firmware \
-        nano networkmanager sudo grub efibootmgr archlinux-keyring
+    echo
+    echo "Installing base system..."
+    pacstrap -C "$PACMAN_CONF" /mnt \
+        base linux linux-firmware nano networkmanager sudo grub efibootmgr archlinux-keyring
 
-    ${SUDO} genfstab -U /mnt >> /mnt/etc/fstab
+    genfstab -U /mnt >> /mnt/etc/fstab
 }
 
-configure() {
-    ${SUDO} arch-chroot /mnt /bin/bash <<EOF
-set -e
+configure_system() {
+    echo
+    echo "Configuring installed system..."
+    arch-chroot /mnt /bin/bash <<EOF
+set -euo pipefail
 
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
 hwclock --systohc
 
-echo "$LOCALE UTF-8" >> /etc/locale.gen
+grep -q '^$LOCALE UTF-8$' /etc/locale.gen || echo '$LOCALE UTF-8' >> /etc/locale.gen
 locale-gen
-echo "LANG=$LOCALE" > /etc/locale.conf
+echo 'LANG=$LOCALE' > /etc/locale.conf
 
-echo "$HOSTNAME" > /etc/hostname
+echo '$HOSTNAME' > /etc/hostname
 
-echo "127.0.0.1 localhost" > /etc/hosts
-echo "::1 localhost" >> /etc/hosts
-echo "127.0.1.1 $HOSTNAME" >> /etc/hosts
+cat > /etc/hosts <<HOSTS
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   $HOSTNAME.localdomain $HOSTNAME
+HOSTS
 
 pacman-key --init
 pacman-key --populate archlinux
+pacman -Sy --noconfirm archlinux-keyring
 
-echo "Set ROOT password:"
+echo
+echo 'Set ROOT password:'
 passwd
 
-useradd -m -G wheel $USERNAME
-echo "Set password for $USERNAME:"
-passwd $USERNAME
+if ! id -u '$USERNAME' >/dev/null 2>&1; then
+    useradd -m -G wheel '$USERNAME'
+fi
+
+echo
+echo 'Set password for $USERNAME:'
+passwd '$USERNAME'
 
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 systemctl enable NetworkManager
 
 pacman -S --noconfirm \
-    xorg xfce4 xfce4-goodies \
-    lightdm lightdm-gtk-greeter \
-    firefox git htop curl
+    xorg \
+    xfce4 \
+    xfce4-goodies \
+    lightdm \
+    lightdm-gtk-greeter \
+    firefox \
+    git \
+    htop \
+    curl
 
 systemctl enable lightdm
 
@@ -196,25 +286,36 @@ grub-mkconfig -o /boot/grub/grub.cfg
 EOF
 }
 
-finish() {
+finish_message() {
     echo
-    echo "DONE"
-    echo "Run:"
-    echo "umount -R /mnt && reboot"
+    echo "Installation complete."
+    echo "Target disk: $DISK"
+    echo
+    echo "Next:"
+    echo "  umount -R /mnt"
+    echo "  reboot"
+    echo
 }
 
 main() {
+    need_cmd apt
+    need_cmd lsblk
+    need_cmd parted
+    need_cmd sgdisk
+    need_cmd mkfs.fat
+    need_cmd mkfs.ext4
+
     require_tools
     check_internet
-    cleanup
+    cleanup_mounts
     select_disk
-    partition
-    format
-    mount_fs
-    prepare_pacman
+    partition_disk
+    format_partitions
+    mount_partitions
+    prepare_pacman_bootstrap
     install_base
-    configure
-    finish
+    configure_system
+    finish_message
 }
 
-main
+main "$@"
