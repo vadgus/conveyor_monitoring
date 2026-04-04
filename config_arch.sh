@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# curl -fsSL -H 'Cache-Control: no-cache' https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/config_arch.sh | sudo bash
+# curl -fsSL -H 'Cache-Control: no-cache' "https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/config_arch.sh?ts=$(date +%s)" | sudo bash
 
 set -euo pipefail
 
@@ -130,6 +130,7 @@ chmod 0644 "$wallpaper_file" 2>/dev/null || true
 echo "==> XFCE autostart"
 if systemctl is-enabled lightdm >/dev/null 2>&1; then
     mkdir -p "$user_home/.config/autostart"
+    mkdir -p "$user_home/.local/bin"
 
     cat > "$user_home/.config/autostart/disable-screen-blanking.desktop" <<'EOF'
 [Desktop Entry]
@@ -143,19 +144,61 @@ EOF
 [Desktop Entry]
 Type=Application
 Name=Apply XFCE Theme
-Exec=sh -c 'xfconf-query -c xsettings -p /Net/ThemeName -s Adwaita-dark >/dev/null 2>&1 || true; xfconf-query -c xsettings -p /Net/IconThemeName -s Adwaita >/dev/null 2>&1 || true'
+Exec=sh -c 'sleep 3; xfconf-query -c xsettings -p /Net/ThemeName -s Adwaita-dark >/dev/null 2>&1 || true; xfconf-query -c xsettings -p /Net/IconThemeName -s Adwaita >/dev/null 2>&1 || true'
 X-GNOME-Autostart-enabled=true
 EOF
 
-    cat > "$user_home/.config/autostart/apply-xfce-wallpaper.desktop" <<EOF
+    cat > "$user_home/.local/bin/apply_xfce_wallpaper.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+wallpaper_file="$wallpaper_file"
+
+sleep 8
+
+if ! command -v xfconf-query >/dev/null 2>&1; then
+    exit 0
+fi
+
+if ! command -v xfdesktop >/dev/null 2>&1; then
+    exit 0
+fi
+
+for _ in \$(seq 1 20); do
+    if xfconf-query -c xfce4-desktop -l >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+
+xfconf-query -c xfce4-desktop -p /backdrop/single-workspace-mode -n -t bool -s true >/dev/null 2>&1 || true
+
+last_image_paths=\$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$' || true)
+image_style_paths=\$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/image-style$' || true)
+
+for p in \$last_image_paths; do
+    xfconf-query -c xfce4-desktop -p "\$p" -s "\$wallpaper_file" >/dev/null 2>&1 || true
+done
+
+for p in \$image_style_paths; do
+    xfconf-query -c xfce4-desktop -p "\$p" -s 3 >/dev/null 2>&1 || true
+done
+
+xfdesktop --reload >/dev/null 2>&1 || true
+EOF
+
+    chmod +x "$user_home/.local/bin/apply_xfce_wallpaper.sh"
+
+    cat > "$user_home/.config/autostart/apply-xfce-wallpaper.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Apply XFCE Wallpaper
-Exec=sh -c 'for p in \$(xfconf-query -c xfce4-desktop -l | grep "/last-image$" || true); do xfconf-query -c xfce4-desktop -p "\$p" -s "$wallpaper_file" >/dev/null 2>&1 || true; done; for p in \$(xfconf-query -c xfce4-desktop -l | grep "/image-style$" || true); do xfconf-query -c xfce4-desktop -p "\$p" -s 3 >/dev/null 2>&1 || true; done'
+Exec=sh -c "$HOME/.local/bin/apply_xfce_wallpaper.sh"
 X-GNOME-Autostart-enabled=true
 EOF
 
     chown -R "$real_user:$real_user" "$user_home/.config"
+    chown -R "$real_user:$real_user" "$user_home/.local"
 fi
 
 echo "==> Done. Reboot recommended."
