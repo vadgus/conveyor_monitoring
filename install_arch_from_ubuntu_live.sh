@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# bash <(curl -fsSL https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/install_arch_from_ubuntu_live.sh)
+# curl -O https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/install_arch_from_ubuntu_live.sh
+# chmod +x install_arch_from_ubuntu_live.sh
+# ./install_arch_from_ubuntu_live.sh
 
 HOSTNAME="arch_nuc"
 USERNAME="nuc"
