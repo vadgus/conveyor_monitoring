@@ -188,8 +188,8 @@ for monitor in monitor0 monitorHDMI-1; do
     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/last-image" -n -t string -s "\$wallpaper_file" >/dev/null 2>&1 || \
     xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/last-image" -s "\$wallpaper_file" >/dev/null 2>&1 || true
 
-    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -n -t int -s 3 >/dev/null 2>&1 || \
-    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -s 3 >/dev/null 2>&1 || true
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -n -t int -s 1 >/dev/null 2>&1 || \
+    xfconf-query -c xfce4-desktop -p "/backdrop/screen0/\${monitor}/workspace0/image-style" -s 1 >/dev/null 2>&1 || true
 done
 
 for p in \$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$' || true); do
@@ -197,7 +197,7 @@ for p in \$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/last-image$' |
 done
 
 for p in \$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep '/image-style$' || true); do
-    xfconf-query -c xfce4-desktop -p "\$p" -s 3 >/dev/null 2>&1 || true
+    xfconf-query -c xfce4-desktop -p "\$p" -s 1 >/dev/null 2>&1 || true
 done
 
 xfdesktop --reload >/dev/null 2>&1 || true
