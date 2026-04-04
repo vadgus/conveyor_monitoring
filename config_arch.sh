@@ -122,7 +122,7 @@ wallpaper_file="$wallpaper_dir/cron.png"
 mkdir -p "$wallpaper_dir"
 
 curl -fsSL -H 'Cache-Control: no-cache' \
-    "https://raw.githubusercontent.com/vadgus/debug/main/cron.png" \
+    "https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/cron.png" \
     -o "$wallpaper_file" || true
 
 chmod 0644 "$wallpaper_file" 2>/dev/null || true
@@ -151,7 +151,7 @@ EOF
 [Desktop Entry]
 Type=Application
 Name=Apply XFCE Wallpaper
-Exec=sh -c 'xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-style -s 3 >/dev/null 2>&1 || true; xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/last-image -s "$wallpaper_file" >/dev/null 2>&1 || true'
+Exec=sh -c 'for p in \$(xfconf-query -c xfce4-desktop -l | grep "/last-image$" || true); do xfconf-query -c xfce4-desktop -p "\$p" -s "$wallpaper_file" >/dev/null 2>&1 || true; done; for p in \$(xfconf-query -c xfce4-desktop -l | grep "/image-style$" || true); do xfconf-query -c xfce4-desktop -p "\$p" -s 3 >/dev/null 2>&1 || true; done'
 X-GNOME-Autostart-enabled=true
 EOF
 
