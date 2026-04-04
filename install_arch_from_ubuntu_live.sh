@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# === QUICK START ===
-# sudo -i
-# bash <(curl -fsSL https://raw.githubusercontent.com/vadgus/debug/refs/heads/main/install_arch_from_ubuntu_live.sh)
-
 HOSTNAME="arch_nuc"
 USERNAME="nuc"
 TIMEZONE="Europe/Nicosia"
