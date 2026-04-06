@@ -90,10 +90,33 @@ IdleActionSec=0
 EOF
 systemctl restart systemd-logind 2>/dev/null || true
 
-# disable unused services
-systemctl disable unattended-upgrades || true
+# disable unused services and automatic update popups
+systemctl disable --now unattended-upgrades.service 2>/dev/null || true
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
 systemctl disable apport || true
 systemctl disable bluetooth || true
+
+cat <<'EOF' > /etc/apt/apt.conf.d/99-no-auto-updates
+APT::Periodic::Update-Package-Lists "0";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::AutocleanInterval "0";
+APT::Periodic::Unattended-Upgrade "0";
+EOF
+
+mkdir -p /etc/xdg/autostart
+cat <<'EOF' > /etc/xdg/autostart/update-notifier.desktop
+[Desktop Entry]
+Type=Application
+Name=Update Notifier
+Exec=sh -c 'exit 0'
+NoDisplay=true
+X-GNOME-Autostart-enabled=false
+Hidden=true
+EOF
+
+pkill -f update-notifier 2>/dev/null || true
+pkill -f update-manager 2>/dev/null || true
 
 # useful aliases
 if grep -q "^alias ll=" "$bashrc_file"; then
