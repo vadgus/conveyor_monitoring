@@ -5,6 +5,13 @@
 
 set -e
 
+# ask whether to run apt upgrade (default: no)
+do_upgrade="N"
+if [ -r /dev/tty ]; then
+  read -r -p "Run full system upgrade? [y/N]: " do_upgrade </dev/tty || true
+fi
+do_upgrade=${do_upgrade:-N}
+
 # get real username
 real_user=$(logname 2>/dev/null || who | awk '{print $1}' | head -n 1)
 user_home="/home/$real_user"
@@ -12,7 +19,11 @@ bashrc_file="$user_home/.bashrc"
 
 # install base packages
 apt-get update
-apt-get upgrade -y || true
+if [[ "$do_upgrade" =~ ^[Yy]$ ]]; then
+  apt-get upgrade -y || true
+else
+  echo "Skipping apt upgrade"
+fi
 apt-get install -y openssh-server curl git tmux sudo btop
 apt-get autoremove -y
 apt-get autoclean -y
@@ -24,7 +35,7 @@ chmod 0440 /etc/sudoers.d/$real_user
 # set locale and timezone
 update-locale LANG=en_US.UTF-8
 update-locale LC_TIME=en_ZW.UTF-8
-source /etc/default/locale
+. /etc/default/locale 2>/dev/null || true
 
 # disable crash reporting (Ubuntu / Debian / Raspberry Pi OS)
 os_name=$(grep -E '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
@@ -94,8 +105,8 @@ systemctl restart systemd-logind 2>/dev/null || true
 systemctl disable --now unattended-upgrades.service 2>/dev/null || true
 systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
-systemctl disable apport || true
-systemctl disable bluetooth || true
+systemctl disable apport.service 2>/dev/null || true
+systemctl disable bluetooth.service 2>/dev/null || true
 
 cat <<'EOF' > /etc/apt/apt.conf.d/99-no-auto-updates
 APT::Periodic::Update-Package-Lists "0";
@@ -141,8 +152,8 @@ if ! command -v docker &>/dev/null; then
 fi
 
 # determine DE
-desktop_env=$(sudo -u "$real_user" dbus-launch env | grep XDG_CURRENT_DESKTOP | cut -d= -f2 | tr '[:upper:]' '[:lower:]')
-desktop_env=${desktop_env:-$(pgrep -u $real_user -a | grep -Eo '(xfce4-session|gnome-session)' | cut -d- -f1)}
+desktop_env=$(sudo -u "$real_user" dbus-launch env 2>/dev/null | grep '^XDG_CURRENT_DESKTOP=' | cut -d= -f2 | tr '[:upper:]' '[:lower:]' || true)
+desktop_env=${desktop_env:-$(pgrep -u "$real_user" -a | grep -Eo '(xfce4-session|gnome-session)' | cut -d- -f1 | tr '[:upper:]' '[:lower:]' || true)}
 
 # XFCE setup
 # NOTE: do not rely on $DISPLAY here; when running via "curl | sudo bash" DISPLAY is often empty.
@@ -184,9 +195,7 @@ if [[ "$desktop_env" == *"xfce"* ]]; then
 
     # Best-effort: set centered wallpaper image with black background for all monitors and workspaces
     echo "Applying centered wallpaper image to all XFCE monitors..."
-    paths=$(sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u)
-
-    for base in $paths; do
+    sudo -u "$real_user" xfconf-query -c xfce4-desktop -l | grep 'last-image' | sed -E 's#/last-image##' | sort -u | while IFS= read -r base; do
       echo "  → Applying on: $base"
 
       sudo -u "$real_user" xfconf-query -c xfce4-desktop -p "$base/last-image" --create -t string -s "$wallpaper_file" || true
@@ -272,7 +281,7 @@ xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Up" -n -t stri
 xfconf-query -c xfce4-keyboard-shortcuts -p "/xfwm4/custom/<Super>Down" -n -t string -s "tile_down_key" || true
 
 # Centered wallpaper image with black background for all monitors/workspaces
-xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while read base; do
+xfconf-query -c xfce4-desktop -l | grep last-image | sed -E "s#/last-image##" | sort -u | while IFS= read -r base; do
   xfconf-query -c xfce4-desktop -p "\$base/last-image" --create -t string -s "\$WALLPAPER_FILE" || true
   xfconf-query -c xfce4-desktop -p "\$base/image-path" --create -t string -s "\$WALLPAPER_FILE" || true
   xfconf-query -c xfce4-desktop -p "\$base/image-style" --create -t int -s 1 || true
