@@ -159,7 +159,7 @@ desktop_env=${desktop_env:-$(pgrep -u "$real_user" -a | grep -Eo '(xfce4-session
 # NOTE: do not rely on $DISPLAY here; when running via "curl | sudo bash" DISPLAY is often empty.
 # We still want to create autostart entries so settings apply after the first GUI login.
 if [[ "$desktop_env" == *"xfce"* ]]; then
-  apt-get install -y greybird-gtk-theme elementary-icon-theme
+  apt-get install -y greybird-gtk-theme elementary-icon-theme xfce4-screensaver
 
   # Ensure wallpaper image is available locally (centered image on black background)
   wallpaper_dir="/usr/local/share/backgrounds"
